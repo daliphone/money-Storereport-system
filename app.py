@@ -12,7 +12,7 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v2.1.0 (純扣分制版)"
+SYSTEM_VERSION = "v2.1.0"
 UPDATE_LOG = """
 - **調整**: 改為「純扣分」機制，不計算任務獎勵分
 - **規則**: 一項不合格記 1 點違規，單日上限記 5 點
@@ -397,3 +397,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
