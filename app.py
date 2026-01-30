@@ -12,11 +12,10 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v1.7.0 (人員實名制版)"
+SYSTEM_VERSION = "v1.7.1 (權限除錯版)"
 UPDATE_LOG = """
-- **新增**: 回報表單新增「👤 執行人員」欄位
-- **優化**: 所有任務皆需填寫人員姓名，落實責任歸屬
-- **流程**: 儀容自檢可明確標示為哪位同仁的紀錄
+- **除錯**: 新增「系統檢測區」顯示機器人 Email 與詳細錯誤
+- **功能**: 維持人員實名制與連續回報功能
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
@@ -54,7 +53,7 @@ def init_drive_service():
         return build('drive', 'v3', credentials=creds)
     return None
 
-# --- 4. Google Drive 上傳函式 ---
+# --- 4. Google Drive 上傳函式 (強力除錯) ---
 def upload_image_to_drive(file_obj, filename):
     drive_service = init_drive_service()
     if not drive_service:
@@ -70,11 +69,8 @@ def upload_image_to_drive(file_obj, filename):
         ).execute()
         return file.get('webViewLink')
     except Exception as e:
-        error_msg = str(e)
-        if "Drive API has not been used" in error_msg:
-            return "上傳失敗: 請啟用 Drive API"
-        else:
-            return f"上傳失敗: {error_msg[:20]}..."
+        # 回傳完整錯誤訊息，方便除錯
+        return f"上傳失敗: {str(e)}"
 
 # --- 5. 資料庫操作 ---
 def load_data():
@@ -146,6 +142,16 @@ def login():
     
     with st.expander(f"ℹ️ 系統公告 ({SYSTEM_VERSION})", expanded=False):
         st.markdown(UPDATE_LOG)
+    
+    # 【新增】系統檢測區
+    with st.expander("🔧 系統檢測區 (若上傳失敗請看這)", expanded=True):
+        creds = get_creds()
+        if creds:
+            st.code(f"機器人Email: {creds.service_account_email}", language="text")
+            st.info("👆 請確認此 Email 是否已加入 Google Drive 資料夾的「編輯者」？")
+        else:
+            st.error("無法讀取金鑰，請檢查 Secrets")
+
     show_footer()
 
 # --- 9. 員工回報畫面 ---
@@ -156,14 +162,12 @@ def employee_page():
 
     df = load_data()
     
-    # 顯示今日紀錄
     with st.expander("📋 點此查看「本日已回報紀錄」", expanded=True):
         if not df.empty and '日期' in df.columns and '門市' in df.columns:
             today = datetime.now().strftime("%Y-%m-%d")
             my_records = df[ (df['門市'].astype(str) == store_name) & (df['日期'].astype(str) == today) ]
             
             if not my_records.empty:
-                # 【調整顯示欄位】加入「人員」
                 display_cols = ['時間', '人員', '任務', '說明', '檢核狀態']
                 final_cols = [c for c in display_cols if c in my_records.columns]
                 st.dataframe(my_records[final_cols], use_container_width=True, hide_index=True)
@@ -173,14 +177,12 @@ def employee_page():
             if df.empty:
                 st.warning("⚠️ 目前無資料，或 Google Sheet 連線異常。")
             else:
-                st.error(f"❌ Google Sheet 格式錯誤！請確認已新增「人員」欄位。\n目前欄位：{df.columns.tolist()}")
+                st.error(f"❌ Google Sheet 格式錯誤！請確認已新增「人員」欄位。")
 
     st.markdown("---")
 
-    # 【回報區塊】
     st.subheader("🚀 執行任務回報")
 
-    # 1. 任務選擇
     task_name = st.selectbox("📌 選擇任務項目", list(task_definitions.keys()))
     task_info = task_definitions[task_name]
 
@@ -191,14 +193,12 @@ def employee_page():
     else:
         st.success("ℹ️ 此任務不強制拍照")
 
-    # 2. 表單填寫
     with st.form("report_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
-            # 【新增功能】人員姓名輸入框
             reporter_name = st.text_input("👤 執行人員姓名", placeholder="請輸入姓名")
         with col2:
-            pass # 排版用
+            pass
 
         note = st.text_area("備註說明 (選填)", placeholder="如有異常請在此說明...")
         st.markdown("📸 **現場拍照**")
@@ -207,10 +207,8 @@ def employee_page():
         submit_report = st.form_submit_button("✅ 完成任務並回報", use_container_width=True)
 
         if submit_report:
-            # 驗證 1: 姓名必填
             if not reporter_name.strip():
                 st.error("⛔ 請填寫「執行人員姓名」！")
-            # 驗證 2: 強制拍照
             elif task_info['photo_required'] and img_file is None:
                 st.error("⛔ 錯誤：本任務規定必須「拍攝現場照片」才能回報！")
             else:
@@ -218,19 +216,20 @@ def employee_page():
                 if img_file:
                     with st.spinner("☁️ 正在上傳照片至雲端..."):
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.jpg" # 檔名也加上人名
+                        filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.jpg"
                         drive_link = upload_image_to_drive(img_file, filename)
                 
+                # 這裡會顯示完整的錯誤訊息
                 if "上傳失敗" in drive_link:
                     st.error(f"❌ {drive_link}")
+                    st.warning("請截圖此錯誤訊息給管理員，並檢查「系統檢測區」的 Email 設定。")
                 else:
                     current_time = datetime.now()
-                    # 【調整寫入順序】加入 reporter_name
                     row_data = [
                         current_time.strftime("%Y-%m-%d"),
                         current_time.strftime("%H:%M:%S"),
                         store_name,
-                        reporter_name, # 新增這一欄
+                        reporter_name,
                         task_name,
                         note,
                         drive_link,
@@ -278,7 +277,6 @@ def admin_page():
             col3.metric("活躍門市", today_data['門市'].nunique())
             
             st.markdown("### 📋 今日最新回報")
-            # 顯示是否已審核
             st.dataframe(today_data, use_container_width=True)
         else:
             if df.empty:
