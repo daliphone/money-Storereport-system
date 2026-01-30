@@ -12,10 +12,11 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v1.8.0 (內建說明書版)"
+SYSTEM_VERSION = "v2.1.0 (純扣分制版)"
 UPDATE_LOG = """
-- **新增**: 內建「系統使用說明書」，可於登入頁或側邊欄查閱
-- **優化**: 說明書移除敏感密碼資訊，僅保留操作教學
+- **調整**: 改為「純扣分」機制，不計算任務獎勵分
+- **規則**: 一項不合格記 1 點違規，單日上限記 5 點
+- **排行**: 累積扣點越少者排名越高
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
@@ -26,7 +27,7 @@ IMAGE_FOLDER_ID = "1ttjU6wyHl93w-v16cQhku2rnqQe3pgLI"
 # ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 ⚠️⚠️⚠️
 SHEET_URL = "https://docs.google.com/spreadsheets/d/13kUwwjkiPo-C5kBCxpV0JRLtB_dD6zgTwcDLAZAOu90/edit"
 
-# --- 3. 定義說明書內容 (不含密碼) ---
+# --- 3. 定義說明書內容 ---
 USER_MANUAL = """
 ### 🚀 如何安裝到手機桌面？
 **為了方便快速回報，請務必執行此動作：**
@@ -49,13 +50,13 @@ USER_MANUAL = """
     * **拍照**：點擊相機圖示拍攝現場。
 4. **送出**：點擊回報按鈕，系統會自動重整，可直接執行下一項。
 
-### ❓ 常見問題
-* **Q: 為什麼顯示「錯誤：必須拍照」？**
-  * A: 因為您選擇了儀容自檢或清潔等強制拍照的任務。
-* **Q: 拍照按鈕沒反應？**
-  * A: 請至手機設定確認瀏覽器 (Safari/Chrome) 是否已開啟「相機權限」。
-* **Q: 上傳失敗？**
-  * A: 請檢查網路，若持續失敗請截圖回報管理處。
+### ⚠️ 違規扣點規則 (v2.1)
+* **純扣分制**：目標是保持 **0 點** 違規紀錄。
+* **記點方式**：每被審核為「不合格」，記 **1 點** 違規。
+* **停損機制**：每日單店記點上限為 **5 點**。
+* **範例**：
+    * 當日 2 項不合格 = 累積 2 點違規。
+    * 當日 8 項不合格 = 累積 5 點違規 (達上限)。
 """
 
 # --- 4. 連線設定 ---
@@ -148,6 +149,38 @@ def show_footer():
     st.markdown("---")
     st.markdown(f"<div style='text-align: center; color: gray; font-size: 12px;'>{COPYRIGHT_TEXT} | {SYSTEM_VERSION}</div>", unsafe_allow_html=True)
 
+# 積分計算函式 (v2.1 純扣分制)
+def calculate_scores_v2(df):
+    if df.empty or '檢核狀態' not in df.columns or '日期' not in df.columns or '門市' not in df.columns:
+        return pd.DataFrame()
+
+    scores_list = []
+    
+    # 1. 依據 [日期, 門市] 分組計算單日違規點數
+    grouped = df.groupby(['日期', '門市'])
+    
+    for (date, store), group in grouped:
+        # A. 計算不合格數量
+        mistakes = len(group[group['檢核狀態'] == '不合格'])
+        
+        # B. 單日上限：最多記 5 點
+        daily_penalty = min(mistakes, 5)
+        
+        # 只有當天有扣分才記錄
+        if daily_penalty > 0:
+            scores_list.append({'門市': store, '單日違規點數': daily_penalty})
+    
+    # 2. 加總各門市的歷史總扣點
+    scores_df = pd.DataFrame(scores_list)
+    if not scores_df.empty:
+        final_scores = scores_df.groupby('門市')['單日違規點數'].sum().reset_index(name='累積扣點(越少越好)')
+        # 排序：扣分少的排在上面 (升冪排序)
+        final_scores = final_scores.sort_values(by='累積扣點(越少越好)', ascending=True)
+        return final_scores
+    else:
+        # 如果大家都沒有扣分，顯示完美
+        return pd.DataFrame(columns=['門市', '累積扣點(越少越好)'])
+
 # --- 9. 登入畫面 ---
 def login():
     st.markdown("## 👋 馬尼通訊即時回報")
@@ -172,23 +205,18 @@ def login():
             else:
                 st.error("❌ 密碼錯誤，請重新輸入")
     
-    # 【新增】登入頁面的說明書 (折疊式)
     with st.expander("📖 系統使用說明書 (點擊展開)", expanded=False):
         st.markdown(USER_MANUAL)
 
     with st.expander(f"ℹ️ 系統公告 ({SYSTEM_VERSION})", expanded=False):
         st.markdown(UPDATE_LOG)
     
-    # 除錯區塊已隱藏
-    # with st.expander("🔧 系統檢測區...", expanded=True): ...
-
     show_footer()
 
 # --- 10. 員工回報畫面 ---
 def employee_page():
     store_name = st.session_state['user_store']
     
-    # 【新增】側邊欄說明書
     st.sidebar.title("功能選單")
     with st.sidebar.expander("📖 使用說明書", expanded=False):
         st.markdown(USER_MANUAL)
@@ -197,7 +225,6 @@ def employee_page():
         st.session_state['logged_in'] = False
         st.rerun()
 
-    # 主畫面開始
     st.title(f"📝 {store_name}")
     st.caption(f"目前時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
@@ -291,7 +318,6 @@ def admin_page():
     if SHEET_URL.startswith("http"):
         st.sidebar.link_button("📑 前往 Google Sheet 審核", SHEET_URL)
 
-    # 【新增】後台也放一份說明書，方便管理者查看
     with st.sidebar.expander("📖 使用說明書", expanded=False):
         st.markdown(USER_MANUAL)
 
@@ -315,6 +341,18 @@ def admin_page():
             col2.metric("異常備註", abnormal_count)
             col3.metric("活躍門市", today_data['門市'].nunique())
             
+            # 【新版 v2.1】門市違規記點榜
+            st.markdown("---")
+            st.subheader("⚠️ 門市違規記點榜")
+            st.info("💡 計分規則：一項不合格記 1 點違規 (單日上限 5 點)。點數越少表現越好。")
+            
+            score_df = calculate_scores_v2(df)
+            if not score_df.empty:
+                st.dataframe(score_df, use_container_width=True, hide_index=True)
+            else:
+                st.success("🎉 目前所有門市皆無違規紀錄！")
+
+            st.markdown("---")
             st.markdown("### 📋 今日最新回報")
             st.dataframe(today_data, use_container_width=True)
         else:
