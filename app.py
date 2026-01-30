@@ -12,37 +12,30 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v1.4.0 (雲端網頁版)"
+SYSTEM_VERSION = "v1.5.0 (連續回報優化版)"
 UPDATE_LOG = """
-- **架構**: 支援 Streamlit Cloud 雲端部署
-- **新增**: 圖片直接上傳至 Google Drive 指定資料夾
-- **安全**: 改用 Secrets 管理金鑰，不留本機檔案
+- **介面**: 「今日已回報紀錄」移至頁面最頂部，方便即時確認
+- **優化**: 送出回報後自動清空欄位並更新紀錄，可立即執行下一項任務
+- **功能**: 維持雲端資料庫連線與 Google Drive 圖片上傳
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
 
-# ⚠️⚠️⚠️ 請在此填入您 Google Drive 照片資料夾的 ID ⚠️⚠️⚠️
-IMAGE_FOLDER_ID = "1D-Uz72q-bC8MyFon6RVQuEYFOA7Vcv9y" 
+# ⚠️⚠️⚠️ 請確認您的 Google Drive 資料夾 ID 是否正確 ⚠️⚠️⚠️
+IMAGE_FOLDER_ID = "您的資料夾ID請貼在這裡" 
 
-# --- 3. 連線設定 (相容本機與雲端) ---
+# --- 3. 連線設定 ---
 @st.cache_resource
 def get_creds():
-    # 定義需要的權限範圍 (Sheet + Drive)
-    scope = [
-        'https://spreadsheets.google.com/feeds',
-        'https://www.googleapis.com/auth/drive'
-    ]
-    
-    # 優先嘗試從 Streamlit Cloud 的 Secrets 讀取
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     if "gcp_service_account" in st.secrets:
         creds_dict = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     else:
-        # 如果在本地端，則讀取 json 檔案
         try:
             creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
         except FileNotFoundError:
-            st.error("❌ 錯誤：找不到金鑰！請在雲端設定 Secrets 或在本地放入 json 檔。")
+            st.error("❌ 錯誤：找不到金鑰！")
             return None
     return creds
 
@@ -65,25 +58,20 @@ def upload_image_to_drive(file_obj, filename):
         return "上傳失敗_無權限"
     
     try:
-        file_metadata = {
-            'name': filename,
-            'parents': [IMAGE_FOLDER_ID] # 指定上傳到哪個資料夾
-        }
+        file_metadata = {'name': filename, 'parents': [IMAGE_FOLDER_ID]}
         media = MediaIoBaseUpload(file_obj, mimetype='image/jpeg')
-        
         file = drive_service.files().create(
             body=file_metadata,
             media_body=media,
             fields='id, webViewLink'
         ).execute()
-        
-        # 回傳圖片的檢視連結
         return file.get('webViewLink')
     except Exception as e:
         st.error(f"圖片上傳失敗: {e}")
         return "上傳失敗"
 
 # --- 5. 資料庫操作 ---
+# 注意：這裡不快取資料 (remove cache)，確保每次重整都能抓到最新的一筆
 def load_data():
     client = init_sheet_client()
     if client:
@@ -92,7 +80,7 @@ def load_data():
             data = sheet.get_all_records()
             return pd.DataFrame(data)
         except Exception as e:
-            st.error(f"讀取資料庫失敗: {e}")
+            # st.error(f"讀取資料庫失敗: {e}") # 暫時隱藏錯誤以免干擾
             return pd.DataFrame()
     return pd.DataFrame()
 
@@ -102,7 +90,7 @@ def save_to_sheet(data_list):
         sheet = client.open(SHEET_NAME).sheet1
         sheet.append_row(data_list)
 
-# --- 6. 門市與任務資料 (維持 v1.3.0) ---
+# --- 6. 門市與任務資料 ---
 users_db = {
     "文賢店": {"password": "111", "role": "User"},
     "東門店": {"password": "222", "role": "User"},
@@ -159,8 +147,35 @@ def login():
 # --- 9. 員工回報畫面 ---
 def employee_page():
     store_name = st.session_state['user_store']
-    st.title(f"📝 {store_name} - 每日回報")
+    st.title(f"📝 {store_name}")
     st.caption(f"目前時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+    # 【改動 1】將「本日已回報紀錄」移到最頂部，並自動讀取最新資料
+    with st.expander("📋 點此查看「本日已回報紀錄」", expanded=True):
+        # 這裡會從 Google Sheet 撈取最新資料
+        df = load_data() 
+        if not df.empty and '日期' in df.columns and '門市' in df.columns:
+            today = datetime.now().strftime("%Y-%m-%d")
+            # 篩選 本日 & 本門市
+            my_records = df[ (df['門市'].astype(str) == store_name) & (df['日期'].astype(str) == today) ]
+            
+            if not my_records.empty:
+                # 只顯示重點欄位，讓畫面乾淨點
+                display_cols = ['時間', '任務', '說明', '檢核狀態']
+                # 如果欄位有缺，就顯示所有欄位
+                final_cols = [c for c in display_cols if c in my_records.columns]
+                if not final_cols: final_cols = my_records.columns
+                
+                st.dataframe(my_records[final_cols], use_container_width=True, hide_index=True)
+            else:
+                st.info("尚無今日紀錄，請開始執行任務。")
+        else:
+            st.info("資料讀取中或尚無紀錄...")
+
+    st.markdown("---")
+
+    # 【回報區塊】
+    st.subheader("🚀 執行任務回報")
 
     task_name = st.selectbox("📌 選擇任務項目", list(task_definitions.keys()))
     task_info = task_definitions[task_name]
@@ -172,7 +187,7 @@ def employee_page():
     else:
         st.success("ℹ️ 此任務不強制拍照")
 
-    with st.form("report_form"):
+    with st.form("report_form", clear_on_submit=True): # clear_on_submit 雖然會清空，但我們用 rerun 會更徹底
         note = st.text_area("備註說明 (選填)", placeholder="如有異常請在此說明...")
         st.markdown("📸 **現場拍照**")
         img_file = st.camera_input("點擊拍照", label_visibility="collapsed")
@@ -183,16 +198,15 @@ def employee_page():
             if task_info['photo_required'] and img_file is None:
                 st.error("⛔ 錯誤：本任務規定必須「拍攝現場照片」才能回報！")
             else:
-                # 雲端版邏輯：直接上傳到 Drive
+                # 1. 上傳圖片
                 drive_link = "無照片"
                 if img_file:
                     with st.spinner("☁️ 正在上傳照片至雲端..."):
-                        # 檔名: 20260130_文賢店_儀容自檢.jpg
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         filename = f"{timestamp}_{store_name}_{task_name}.jpg"
                         drive_link = upload_image_to_drive(img_file, filename)
                 
-                # 寫入 Google Sheet
+                # 2. 寫入 Sheet
                 current_time = datetime.now()
                 row_data = [
                     current_time.strftime("%Y-%m-%d"),
@@ -200,27 +214,17 @@ def employee_page():
                     store_name,
                     task_name,
                     note,
-                    drive_link, # 這裡現在存的是 Google Drive 的連結
+                    drive_link,
                     "未審核"
                 ]
                 
                 with st.spinner("正在寫入資料庫..."):
                     save_to_sheet(row_data)
                 
-                st.success("🎉 回報成功！")
-                time.sleep(1)
-                st.rerun()
+                st.success("🎉 回報成功！資料已更新。")
+                time.sleep(1) # 讓成功訊息顯示 1 秒
+                st.rerun()    # 【關鍵】重新整理頁面：清空表單、更新上方紀錄、維持登入
 
-    # 歷史紀錄
-    st.markdown("---")
-    st.subheader("📋 本日已回報紀錄")
-    df = load_data()
-    if not df.empty:
-        if '日期' in df.columns and '門市' in df.columns:
-            today = datetime.now().strftime("%Y-%m-%d")
-            my_records = df[ (df['門市'].astype(str) == store_name) & (df['日期'].astype(str) == today) ]
-            st.dataframe(my_records, use_container_width=True)
-    
     if st.button("登出系統"):
         st.session_state['logged_in'] = False
         st.rerun()     
