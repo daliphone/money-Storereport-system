@@ -148,11 +148,11 @@ def login():
     with st.expander(f"ℹ️ 系統公告 ({SYSTEM_VERSION})", expanded=False):
         st.markdown(UPDATE_LOG)
     
-    with st.expander("🔧 系統檢測區 (若上傳失敗請看這)", expanded=True):
-        creds = get_creds()
-        if creds:
-            st.code(f"機器人Email: {creds.service_account_email}", language="text")
-            st.info("👆 請確認此 Email 已加入「共用雲端硬碟」的內容管理員？")
+    # with st.expander("🔧 系統檢測區 (若上傳失敗請看這)", expanded=True):
+    #     creds = get_creds()
+    #     if creds:
+    #         st.code(f"機器人Email: {creds.service_account_email}", language="text")
+    #         st.info("👆 請確認此 Email 已加入「共用雲端硬碟」的內容管理員？")
 
     show_footer()
 
@@ -321,3 +321,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
