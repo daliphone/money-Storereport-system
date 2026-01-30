@@ -12,15 +12,17 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v1.7.1 (權限除錯版)"
+SYSTEM_VERSION = "v1.7.2 (共用硬碟支援版)"
 UPDATE_LOG = """
-- **除錯**: 新增「系統檢測區」顯示機器人 Email 與詳細錯誤
-- **功能**: 維持人員實名制與連續回報功能
+- **修復**: 針對「儲存空間不足 (Storage Quota)」錯誤進行修復
+- **新增**: 支援上傳至「共用雲端硬碟 (Shared Drives)」
+- **設定**: 請務必使用共用雲端硬碟以解決機器人 0GB 空間問題
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
 
-# ⚠️⚠️⚠️ 請確認您的 Google Drive 資料夾 ID ⚠️⚠️⚠️
+# ⚠️⚠️⚠️ 請填入【共用雲端硬碟】裡的資料夾 ID ⚠️⚠️⚠️
+# 請確認這個資料夾是在 "共用雲端硬碟" 裡，而不是 "我的雲端硬碟"
 IMAGE_FOLDER_ID = "1ttjU6wyHl93w-v16cQhku2rnqQe3pgLI" 
 
 # ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 ⚠️⚠️⚠️
@@ -53,7 +55,7 @@ def init_drive_service():
         return build('drive', 'v3', credentials=creds)
     return None
 
-# --- 4. Google Drive 上傳函式 (強力除錯) ---
+# --- 4. Google Drive 上傳函式 (支援 Shared Drive) ---
 def upload_image_to_drive(file_obj, filename):
     drive_service = init_drive_service()
     if not drive_service:
@@ -62,14 +64,17 @@ def upload_image_to_drive(file_obj, filename):
     try:
         file_metadata = {'name': filename, 'parents': [IMAGE_FOLDER_ID]}
         media = MediaIoBaseUpload(file_obj, mimetype='image/jpeg')
+        
+        # 【關鍵修改】加入 supportsAllDrives=True 以支援共用雲端硬碟
         file = drive_service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id, webViewLink'
+            fields='id, webViewLink',
+            supportsAllDrives=True  # 👈 這行是解決 403 空間問題的關鍵
         ).execute()
+        
         return file.get('webViewLink')
     except Exception as e:
-        # 回傳完整錯誤訊息，方便除錯
         return f"上傳失敗: {str(e)}"
 
 # --- 5. 資料庫操作 ---
@@ -143,14 +148,11 @@ def login():
     with st.expander(f"ℹ️ 系統公告 ({SYSTEM_VERSION})", expanded=False):
         st.markdown(UPDATE_LOG)
     
-    # 【新增】系統檢測區
     with st.expander("🔧 系統檢測區 (若上傳失敗請看這)", expanded=True):
         creds = get_creds()
         if creds:
             st.code(f"機器人Email: {creds.service_account_email}", language="text")
-            st.info("👆 請確認此 Email 是否已加入 Google Drive 資料夾的「編輯者」？")
-        else:
-            st.error("無法讀取金鑰，請檢查 Secrets")
+            st.info("👆 請確認此 Email 已加入「共用雲端硬碟」的內容管理員？")
 
     show_footer()
 
@@ -219,10 +221,9 @@ def employee_page():
                         filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.jpg"
                         drive_link = upload_image_to_drive(img_file, filename)
                 
-                # 這裡會顯示完整的錯誤訊息
                 if "上傳失敗" in drive_link:
                     st.error(f"❌ {drive_link}")
-                    st.warning("請截圖此錯誤訊息給管理員，並檢查「系統檢測區」的 Email 設定。")
+                    st.warning("建議使用「共用雲端硬碟」以解決機器人儲存空間不足的問題。")
                 else:
                     current_time = datetime.now()
                     row_data = [
@@ -320,4 +321,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
