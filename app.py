@@ -21,7 +21,7 @@ COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
 
 # ⚠️⚠️⚠️ 請確認您的 Google Drive 資料夾 ID ⚠️⚠️⚠️
-IMAGE_FOLDER_ID = "1D-Uz72q-bC8MyFon6RVQuEYFOA7Vcv9y" 
+IMAGE_FOLDER_ID = "1ttjU6wyHl93w-v16cQhku2rnqQe3pgLI" 
 
 # ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 ⚠️⚠️⚠️
 SHEET_URL = "https://docs.google.com/spreadsheets/d/13kUwwjkiPo-C5kBCxpV0JRLtB_dD6zgTwcDLAZAOu90/edit"
@@ -320,3 +320,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
