@@ -12,23 +12,53 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v1.7.2 (共用硬碟支援版)"
+SYSTEM_VERSION = "v1.8.0 (內建說明書版)"
 UPDATE_LOG = """
-- **修復**: 針對「儲存空間不足 (Storage Quota)」錯誤進行修復
-- **新增**: 支援上傳至「共用雲端硬碟 (Shared Drives)」
-- **設定**: 請務必使用共用雲端硬碟以解決機器人 0GB 空間問題
+- **新增**: 內建「系統使用說明書」，可於登入頁或側邊欄查閱
+- **優化**: 說明書移除敏感密碼資訊，僅保留操作教學
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
 
 # ⚠️⚠️⚠️ 請填入【共用雲端硬碟】裡的資料夾 ID ⚠️⚠️⚠️
-# 請確認這個資料夾是在 "共用雲端硬碟" 裡，而不是 "我的雲端硬碟"
 IMAGE_FOLDER_ID = "1ttjU6wyHl93w-v16cQhku2rnqQe3pgLI" 
 
 # ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 ⚠️⚠️⚠️
 SHEET_URL = "https://docs.google.com/spreadsheets/d/13kUwwjkiPo-C5kBCxpV0JRLtB_dD6zgTwcDLAZAOu90/edit"
 
-# --- 3. 連線設定 ---
+# --- 3. 定義說明書內容 (不含密碼) ---
+USER_MANUAL = """
+### 🚀 如何安裝到手機桌面？
+**為了方便快速回報，請務必執行此動作：**
+* **🍎 iPhone (iOS)**：
+    1. 使用 Safari 開啟網址
+    2. 點擊下方「分享按鈕」 (正方形箭頭)
+    3. 選擇「加入主畫面」
+* **🤖 Android**：
+    1. 使用 Chrome 開啟網址
+    2. 點擊右上角「三個點」選單
+    3. 選擇「加到主畫面」或「安裝應用程式」
+
+### 📝 員工回報流程
+1. **登入**：選擇門市並輸入密碼。
+2. **確認**：查看上方「本日已回報紀錄」，確認進度。
+3. **填寫**：
+    * **選擇任務**：注意黃色警示代表「必須拍照」。
+    * **輸入姓名**：請填寫執行人員全名。
+    * **備註**：如有異常請詳細說明。
+    * **拍照**：點擊相機圖示拍攝現場。
+4. **送出**：點擊回報按鈕，系統會自動重整，可直接執行下一項。
+
+### ❓ 常見問題
+* **Q: 為什麼顯示「錯誤：必須拍照」？**
+  * A: 因為您選擇了儀容自檢或清潔等強制拍照的任務。
+* **Q: 拍照按鈕沒反應？**
+  * A: 請至手機設定確認瀏覽器 (Safari/Chrome) 是否已開啟「相機權限」。
+* **Q: 上傳失敗？**
+  * A: 請檢查網路，若持續失敗請截圖回報管理處。
+"""
+
+# --- 4. 連線設定 ---
 @st.cache_resource
 def get_creds():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -55,7 +85,7 @@ def init_drive_service():
         return build('drive', 'v3', credentials=creds)
     return None
 
-# --- 4. Google Drive 上傳函式 (支援 Shared Drive) ---
+# --- 5. Google Drive 上傳函式 ---
 def upload_image_to_drive(file_obj, filename):
     drive_service = init_drive_service()
     if not drive_service:
@@ -64,20 +94,17 @@ def upload_image_to_drive(file_obj, filename):
     try:
         file_metadata = {'name': filename, 'parents': [IMAGE_FOLDER_ID]}
         media = MediaIoBaseUpload(file_obj, mimetype='image/jpeg')
-        
-        # 【關鍵修改】加入 supportsAllDrives=True 以支援共用雲端硬碟
         file = drive_service.files().create(
             body=file_metadata,
             media_body=media,
             fields='id, webViewLink',
-            supportsAllDrives=True  # 👈 這行是解決 403 空間問題的關鍵
+            supportsAllDrives=True
         ).execute()
-        
         return file.get('webViewLink')
     except Exception as e:
         return f"上傳失敗: {str(e)}"
 
-# --- 5. 資料庫操作 ---
+# --- 6. 資料庫操作 ---
 def load_data():
     client = init_sheet_client()
     if client:
@@ -95,7 +122,7 @@ def save_to_sheet(data_list):
         sheet = client.open(SHEET_NAME).sheet1
         sheet.append_row(data_list)
 
-# --- 6. 門市與任務資料 ---
+# --- 7. 門市與任務資料 ---
 users_db = {
     "文賢店": {"password": "111", "role": "User"},
     "東門店": {"password": "222", "role": "User"},
@@ -116,12 +143,12 @@ task_definitions = {
     "閉店-庫存表上傳": {"desc": "請確認本日進銷存報表已結算，並將庫存表匯出上傳。", "photo_required": False}
 }
 
-# --- 7. 輔助函式 ---
+# --- 8. 輔助函式 ---
 def show_footer():
     st.markdown("---")
     st.markdown(f"<div style='text-align: center; color: gray; font-size: 12px;'>{COPYRIGHT_TEXT} | {SYSTEM_VERSION}</div>", unsafe_allow_html=True)
 
-# --- 8. 登入畫面 ---
+# --- 9. 登入畫面 ---
 def login():
     st.markdown("## 👋 馬尼通訊即時回報")
     st.info("請選擇門市並輸入密碼")
@@ -145,20 +172,32 @@ def login():
             else:
                 st.error("❌ 密碼錯誤，請重新輸入")
     
+    # 【新增】登入頁面的說明書 (折疊式)
+    with st.expander("📖 系統使用說明書 (點擊展開)", expanded=False):
+        st.markdown(USER_MANUAL)
+
     with st.expander(f"ℹ️ 系統公告 ({SYSTEM_VERSION})", expanded=False):
         st.markdown(UPDATE_LOG)
     
-    # with st.expander("🔧 系統檢測區 (若上傳失敗請看這)", expanded=True):
-    #     creds = get_creds()
-    #     if creds:
-    #         st.code(f"機器人Email: {creds.service_account_email}", language="text")
-    #         st.info("👆 請確認此 Email 已加入「共用雲端硬碟」的內容管理員？")
+    # 除錯區塊已隱藏
+    # with st.expander("🔧 系統檢測區...", expanded=True): ...
 
     show_footer()
 
-# --- 9. 員工回報畫面 ---
+# --- 10. 員工回報畫面 ---
 def employee_page():
     store_name = st.session_state['user_store']
+    
+    # 【新增】側邊欄說明書
+    st.sidebar.title("功能選單")
+    with st.sidebar.expander("📖 使用說明書", expanded=False):
+        st.markdown(USER_MANUAL)
+    
+    if st.sidebar.button("登出系統"):
+        st.session_state['logged_in'] = False
+        st.rerun()
+
+    # 主畫面開始
     st.title(f"📝 {store_name}")
     st.caption(f"目前時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
@@ -182,7 +221,6 @@ def employee_page():
                 st.error(f"❌ Google Sheet 格式錯誤！請確認已新增「人員」欄位。")
 
     st.markdown("---")
-
     st.subheader("🚀 執行任務回報")
 
     task_name = st.selectbox("📌 選擇任務項目", list(task_definitions.keys()))
@@ -223,7 +261,6 @@ def employee_page():
                 
                 if "上傳失敗" in drive_link:
                     st.error(f"❌ {drive_link}")
-                    st.warning("建議使用「共用雲端硬碟」以解決機器人儲存空間不足的問題。")
                 else:
                     current_time = datetime.now()
                     row_data = [
@@ -243,19 +280,20 @@ def employee_page():
                     st.success(f"🎉 {reporter_name} 回報成功！")
                     time.sleep(1)
                     st.rerun()
-
-    if st.button("登出系統"):
-        st.session_state['logged_in'] = False
-        st.rerun()     
+    
     show_footer()
 
-# --- 10. 管理者畫面 ---
+# --- 11. 管理者畫面 ---
 def admin_page():
     st.sidebar.title("🔧 管理後台")
     st.sidebar.write(f"登入身分: {st.session_state['user_store']}")
     
     if SHEET_URL.startswith("http"):
         st.sidebar.link_button("📑 前往 Google Sheet 審核", SHEET_URL)
+
+    # 【新增】後台也放一份說明書，方便管理者查看
+    with st.sidebar.expander("📖 使用說明書", expanded=False):
+        st.markdown(USER_MANUAL)
 
     page = st.sidebar.radio("功能切換", ["即時戰情室", "歷史資料查詢"])
     df = load_data()
@@ -308,7 +346,7 @@ def admin_page():
         st.rerun()
     show_footer()
 
-# --- 11. 主程式 ---
+# --- 12. 主程式 ---
 def main():
     if 'logged_in' not in st.session_state or not st.session_state['logged_in']:
         login()
@@ -321,4 +359,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
