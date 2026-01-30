@@ -12,11 +12,10 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v1.5.0 (連續回報優化版)"
+SYSTEM_VERSION = "v1.5.1 (防呆修正版)"
 UPDATE_LOG = """
-- **介面**: 「今日已回報紀錄」移至頁面最頂部，方便即時確認
-- **優化**: 送出回報後自動清空欄位並更新紀錄，可立即執行下一項任務
-- **功能**: 維持雲端資料庫連線與 Google Drive 圖片上傳
+- **修正**: 增加資料庫讀取防呆機制，避免因 Google Sheet 標題錯誤導致崩潰
+- **介面**: 戰情室與回報頁面增加欄位檢查
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
@@ -67,11 +66,10 @@ def upload_image_to_drive(file_obj, filename):
         ).execute()
         return file.get('webViewLink')
     except Exception as e:
-        st.error(f"圖片上傳失敗: {e}")
+        # st.error(f"圖片上傳失敗: {e}") 
         return "上傳失敗"
 
 # --- 5. 資料庫操作 ---
-# 注意：這裡不快取資料 (remove cache)，確保每次重整都能抓到最新的一筆
 def load_data():
     client = init_sheet_client()
     if client:
@@ -80,7 +78,6 @@ def load_data():
             data = sheet.get_all_records()
             return pd.DataFrame(data)
         except Exception as e:
-            # st.error(f"讀取資料庫失敗: {e}") # 暫時隱藏錯誤以免干擾
             return pd.DataFrame()
     return pd.DataFrame()
 
@@ -150,27 +147,29 @@ def employee_page():
     st.title(f"📝 {store_name}")
     st.caption(f"目前時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    # 【改動 1】將「本日已回報紀錄」移到最頂部，並自動讀取最新資料
+    # 【防呆檢查】
+    df = load_data()
+    # 檢查是否讀取成功，且關鍵欄位是否存在
+    is_data_valid = not df.empty and '日期' in df.columns and '門市' in df.columns
+
     with st.expander("📋 點此查看「本日已回報紀錄」", expanded=True):
-        # 這裡會從 Google Sheet 撈取最新資料
-        df = load_data() 
-        if not df.empty and '日期' in df.columns and '門市' in df.columns:
+        if is_data_valid:
             today = datetime.now().strftime("%Y-%m-%d")
-            # 篩選 本日 & 本門市
+            # 轉換為字串比較，避免格式問題
             my_records = df[ (df['門市'].astype(str) == store_name) & (df['日期'].astype(str) == today) ]
             
             if not my_records.empty:
-                # 只顯示重點欄位，讓畫面乾淨點
                 display_cols = ['時間', '任務', '說明', '檢核狀態']
-                # 如果欄位有缺，就顯示所有欄位
                 final_cols = [c for c in display_cols if c in my_records.columns]
                 if not final_cols: final_cols = my_records.columns
-                
                 st.dataframe(my_records[final_cols], use_container_width=True, hide_index=True)
             else:
                 st.info("尚無今日紀錄，請開始執行任務。")
         else:
-            st.info("資料讀取中或尚無紀錄...")
+            if df.empty:
+                st.warning("⚠️ 目前無資料，或 Google Sheet 連線異常。")
+            else:
+                st.error("❌ Google Sheet 格式錯誤！請確認第一列標題包含：日期、門市")
 
     st.markdown("---")
 
@@ -187,7 +186,7 @@ def employee_page():
     else:
         st.success("ℹ️ 此任務不強制拍照")
 
-    with st.form("report_form", clear_on_submit=True): # clear_on_submit 雖然會清空，但我們用 rerun 會更徹底
+    with st.form("report_form", clear_on_submit=True):
         note = st.text_area("備註說明 (選填)", placeholder="如有異常請在此說明...")
         st.markdown("📸 **現場拍照**")
         img_file = st.camera_input("點擊拍照", label_visibility="collapsed")
@@ -222,8 +221,8 @@ def employee_page():
                     save_to_sheet(row_data)
                 
                 st.success("🎉 回報成功！資料已更新。")
-                time.sleep(1) # 讓成功訊息顯示 1 秒
-                st.rerun()    # 【關鍵】重新整理頁面：清空表單、更新上方紀錄、維持登入
+                time.sleep(1)
+                st.rerun()
 
     if st.button("登出系統"):
         st.session_state['logged_in'] = False
@@ -237,36 +236,54 @@ def admin_page():
     
     page = st.sidebar.radio("功能切換", ["即時戰情室", "歷史資料查詢"])
     df = load_data()
+    
+    # 【防呆檢查】確保資料庫有內容且有「日期」欄位
+    is_data_valid = not df.empty and '日期' in df.columns
 
     if page == "即時戰情室":
         st.title("📊 營運戰情室")
-        if not df.empty:
+        if is_data_valid:
             col1, col2, col3 = st.columns(3)
             today = datetime.now().strftime("%Y-%m-%d")
+            
+            # 使用 astype(str) 避免日期格式問題
             today_data = df[df['日期'].astype(str) == today]
             
             col1.metric("今日總回報數", len(today_data))
-            col2.metric("異常備註", len(today_data[today_data['說明'] != ""]))
+            
+            # 防呆：檢查是否有「說明」欄位
+            if '說明' in df.columns:
+                abnormal_count = len(today_data[today_data['說明'] != ""])
+            else:
+                abnormal_count = 0
+            col2.metric("異常備註", abnormal_count)
+            
             col3.metric("活躍門市", today_data['門市'].nunique())
             
             st.markdown("### 📋 今日最新回報")
             st.dataframe(today_data, use_container_width=True)
         else:
-            st.info("目前尚無資料")
+            if df.empty:
+                st.info("📭 目前尚無任何回報資料")
+            else:
+                st.error("⚠️ 資料庫格式錯誤：找不到「日期」欄位，請檢查 Google Sheet 標題列。")
 
     elif page == "歷史資料查詢":
         st.title("🗂️ 歷史資料查詢")
         all_stores = ["全部"] + list(users_db.keys())
         filter_store = st.selectbox("篩選門市", all_stores)
         
-        if not df.empty:
+        if is_data_valid:
             if filter_store != "全部":
                 show_df = df[df['門市'] == filter_store]
             else:
                 show_df = df
             st.dataframe(show_df, use_container_width=True)
         else:
-            st.info("目前尚無資料")
+            if df.empty:
+                st.info("📭 目前尚無資料")
+            else:
+                st.error("⚠️ 資料庫格式錯誤：找不到「日期」欄位，請檢查 Google Sheet 標題列。")
 
     st.sidebar.markdown("---")
     if st.sidebar.button("登出"):
