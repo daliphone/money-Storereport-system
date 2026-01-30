@@ -12,16 +12,20 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v1.5.2 (除錯偵探版)"
+SYSTEM_VERSION = "v1.6.0 (上傳除錯版)"
 UPDATE_LOG = """
-- **除錯**: 當格式錯誤時，直接顯示系統「讀取到」的欄位名稱，方便除錯
-- **優化**: 維持連續回報與雲端存檔功能
+- **除錯**: 圖片上傳增加詳細錯誤訊息，以便排查 API 問題
+- **新增**: 管理後台增加「前往 Google Sheet 審核」按鈕
+- **流程**: 審核請直接於 Google Sheet 修改狀態，App 會自動同步顯示
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
 
-# ⚠️⚠️⚠️ 請確認您的 Google Drive 資料夾 ID 是否正確 ⚠️⚠️⚠️
-IMAGE_FOLDER_ID = "您的資料夾ID請貼在這裡" 
+# ⚠️⚠️⚠️ 請確認您的 Google Drive 資料夾 ID ⚠️⚠️⚠️
+IMAGE_FOLDER_ID = "1D-Uz72q-bC8MyFon6RVQuEYFOA7Vcv9y" 
+
+# ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 (方便管理者跳轉) ⚠️⚠️⚠️
+SHEET_URL = "https://docs.google.com/spreadsheets/d/13kUwwjkiPo-C5kBCxpV0JRLtB_dD6zgTwcDLAZAOu90/edit"
 
 # --- 3. 連線設定 ---
 @st.cache_resource
@@ -50,11 +54,11 @@ def init_drive_service():
         return build('drive', 'v3', credentials=creds)
     return None
 
-# --- 4. Google Drive 上傳函式 ---
+# --- 4. Google Drive 上傳函式 (詳細除錯版) ---
 def upload_image_to_drive(file_obj, filename):
     drive_service = init_drive_service()
     if not drive_service:
-        return "上傳失敗_無權限"
+        return "上傳失敗: 無權限或金鑰錯誤"
     
     try:
         file_metadata = {'name': filename, 'parents': [IMAGE_FOLDER_ID]}
@@ -66,7 +70,14 @@ def upload_image_to_drive(file_obj, filename):
         ).execute()
         return file.get('webViewLink')
     except Exception as e:
-        return "上傳失敗"
+        # 將具體錯誤回傳，方便除錯
+        error_msg = str(e)
+        if "Drive API has not been used" in error_msg:
+            return "上傳失敗: 請去 Google Cloud 啟用 Drive API"
+        elif "insufficientPermissions" in error_msg:
+            return "上傳失敗: 機器人沒有資料夾寫入權限"
+        else:
+            return f"上傳失敗: {error_msg[:20]}..." # 只顯示前20個字避免太長
 
 # --- 5. 資料庫操作 ---
 def load_data():
@@ -146,9 +157,7 @@ def employee_page():
     st.title(f"📝 {store_name}")
     st.caption(f"目前時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    # 【防呆檢查】
     df = load_data()
-    # 這裡為了除錯，我們只檢查有沒有讀到東西，欄位檢查移到下方顯示
     
     with st.expander("📋 點此查看「本日已回報紀錄」", expanded=True):
         if not df.empty and '日期' in df.columns and '門市' in df.columns:
@@ -158,7 +167,7 @@ def employee_page():
             if not my_records.empty:
                 display_cols = ['時間', '任務', '說明', '檢核狀態']
                 final_cols = [c for c in display_cols if c in my_records.columns]
-                if not final_cols: final_cols = my_records.columns
+                # 這裡加入簡單的顏色標示 (如果狀態不是未審核)
                 st.dataframe(my_records[final_cols], use_container_width=True, hide_index=True)
             else:
                 st.info("尚無今日紀錄，請開始執行任務。")
@@ -166,8 +175,7 @@ def employee_page():
             if df.empty:
                 st.warning("⚠️ 目前無資料，或 Google Sheet 連線異常。")
             else:
-                # 【除錯關鍵】把讀到的欄位印出來
-                st.error(f"❌ Google Sheet 格式錯誤！\n\n系統讀到的欄位名稱是：\n{df.columns.tolist()}\n\n請檢查是否有多餘空白(例如 '日期 ') 或 標題不在第一行。")
+                st.error(f"❌ Google Sheet 格式錯誤！\n讀取到的欄位：{df.columns.tolist()}")
 
     st.markdown("---")
 
@@ -200,25 +208,30 @@ def employee_page():
                     with st.spinner("☁️ 正在上傳照片至雲端..."):
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         filename = f"{timestamp}_{store_name}_{task_name}.jpg"
+                        # 這裡會接收具體的錯誤訊息或連結
                         drive_link = upload_image_to_drive(img_file, filename)
                 
-                current_time = datetime.now()
-                row_data = [
-                    current_time.strftime("%Y-%m-%d"),
-                    current_time.strftime("%H:%M:%S"),
-                    store_name,
-                    task_name,
-                    note,
-                    drive_link,
-                    "未審核"
-                ]
-                
-                with st.spinner("正在寫入資料庫..."):
-                    save_to_sheet(row_data)
-                
-                st.success("🎉 回報成功！資料已更新。")
-                time.sleep(1)
-                st.rerun()
+                # 檢查是否上傳失敗 (如果是字串且包含'失敗')
+                if "上傳失敗" in drive_link:
+                    st.error(f"❌ {drive_link}。請通知管理員檢查 API 設定。")
+                else:
+                    current_time = datetime.now()
+                    row_data = [
+                        current_time.strftime("%Y-%m-%d"),
+                        current_time.strftime("%H:%M:%S"),
+                        store_name,
+                        task_name,
+                        note,
+                        drive_link,
+                        "未審核"
+                    ]
+                    
+                    with st.spinner("正在寫入資料庫..."):
+                        save_to_sheet(row_data)
+                    
+                    st.success("🎉 回報成功！資料已更新。")
+                    time.sleep(1)
+                    st.rerun()
 
     if st.button("登出系統"):
         st.session_state['logged_in'] = False
@@ -230,6 +243,12 @@ def admin_page():
     st.sidebar.title("🔧 管理後台")
     st.sidebar.write(f"登入身分: {st.session_state['user_store']}")
     
+    # 【新增功能】前往 Google Sheet 按鈕
+    if SHEET_URL.startswith("http"):
+        st.sidebar.link_button("📑 前往 Google Sheet 審核", SHEET_URL)
+    else:
+        st.sidebar.info("請在程式碼中設定 SHEET_URL 以啟用跳轉按鈕")
+
     page = st.sidebar.radio("功能切換", ["即時戰情室", "歷史資料查詢"])
     df = load_data()
     
@@ -242,13 +261,16 @@ def admin_page():
             today = datetime.now().strftime("%Y-%m-%d")
             today_data = df[df['日期'].astype(str) == today]
             col1.metric("今日總回報數", len(today_data))
+            
             if '說明' in df.columns:
                 abnormal_count = len(today_data[today_data['說明'] != ""])
             else:
                 abnormal_count = 0
             col2.metric("異常備註", abnormal_count)
             col3.metric("活躍門市", today_data['門市'].nunique())
+            
             st.markdown("### 📋 今日最新回報")
+            # 顯示是否已審核
             st.dataframe(today_data, use_container_width=True)
         else:
             if df.empty:
