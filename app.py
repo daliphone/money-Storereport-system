@@ -12,10 +12,10 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v1.5.1 (防呆修正版)"
+SYSTEM_VERSION = "v1.5.2 (除錯偵探版)"
 UPDATE_LOG = """
-- **修正**: 增加資料庫讀取防呆機制，避免因 Google Sheet 標題錯誤導致崩潰
-- **介面**: 戰情室與回報頁面增加欄位檢查
+- **除錯**: 當格式錯誤時，直接顯示系統「讀取到」的欄位名稱，方便除錯
+- **優化**: 維持連續回報與雲端存檔功能
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
@@ -66,7 +66,6 @@ def upload_image_to_drive(file_obj, filename):
         ).execute()
         return file.get('webViewLink')
     except Exception as e:
-        # st.error(f"圖片上傳失敗: {e}") 
         return "上傳失敗"
 
 # --- 5. 資料庫操作 ---
@@ -149,13 +148,11 @@ def employee_page():
 
     # 【防呆檢查】
     df = load_data()
-    # 檢查是否讀取成功，且關鍵欄位是否存在
-    is_data_valid = not df.empty and '日期' in df.columns and '門市' in df.columns
-
+    # 這裡為了除錯，我們只檢查有沒有讀到東西，欄位檢查移到下方顯示
+    
     with st.expander("📋 點此查看「本日已回報紀錄」", expanded=True):
-        if is_data_valid:
+        if not df.empty and '日期' in df.columns and '門市' in df.columns:
             today = datetime.now().strftime("%Y-%m-%d")
-            # 轉換為字串比較，避免格式問題
             my_records = df[ (df['門市'].astype(str) == store_name) & (df['日期'].astype(str) == today) ]
             
             if not my_records.empty:
@@ -169,7 +166,8 @@ def employee_page():
             if df.empty:
                 st.warning("⚠️ 目前無資料，或 Google Sheet 連線異常。")
             else:
-                st.error("❌ Google Sheet 格式錯誤！請確認第一列標題包含：日期、門市")
+                # 【除錯關鍵】把讀到的欄位印出來
+                st.error(f"❌ Google Sheet 格式錯誤！\n\n系統讀到的欄位名稱是：\n{df.columns.tolist()}\n\n請檢查是否有多餘空白(例如 '日期 ') 或 標題不在第一行。")
 
     st.markdown("---")
 
@@ -197,7 +195,6 @@ def employee_page():
             if task_info['photo_required'] and img_file is None:
                 st.error("⛔ 錯誤：本任務規定必須「拍攝現場照片」才能回報！")
             else:
-                # 1. 上傳圖片
                 drive_link = "無照片"
                 if img_file:
                     with st.spinner("☁️ 正在上傳照片至雲端..."):
@@ -205,7 +202,6 @@ def employee_page():
                         filename = f"{timestamp}_{store_name}_{task_name}.jpg"
                         drive_link = upload_image_to_drive(img_file, filename)
                 
-                # 2. 寫入 Sheet
                 current_time = datetime.now()
                 row_data = [
                     current_time.strftime("%Y-%m-%d"),
@@ -237,7 +233,6 @@ def admin_page():
     page = st.sidebar.radio("功能切換", ["即時戰情室", "歷史資料查詢"])
     df = load_data()
     
-    # 【防呆檢查】確保資料庫有內容且有「日期」欄位
     is_data_valid = not df.empty and '日期' in df.columns
 
     if page == "即時戰情室":
@@ -245,28 +240,21 @@ def admin_page():
         if is_data_valid:
             col1, col2, col3 = st.columns(3)
             today = datetime.now().strftime("%Y-%m-%d")
-            
-            # 使用 astype(str) 避免日期格式問題
             today_data = df[df['日期'].astype(str) == today]
-            
             col1.metric("今日總回報數", len(today_data))
-            
-            # 防呆：檢查是否有「說明」欄位
             if '說明' in df.columns:
                 abnormal_count = len(today_data[today_data['說明'] != ""])
             else:
                 abnormal_count = 0
             col2.metric("異常備註", abnormal_count)
-            
             col3.metric("活躍門市", today_data['門市'].nunique())
-            
             st.markdown("### 📋 今日最新回報")
             st.dataframe(today_data, use_container_width=True)
         else:
             if df.empty:
                 st.info("📭 目前尚無任何回報資料")
             else:
-                st.error("⚠️ 資料庫格式錯誤：找不到「日期」欄位，請檢查 Google Sheet 標題列。")
+                st.error(f"❌ 格式錯誤！系統讀到的欄位是：\n{df.columns.tolist()}")
 
     elif page == "歷史資料查詢":
         st.title("🗂️ 歷史資料查詢")
@@ -283,7 +271,7 @@ def admin_page():
             if df.empty:
                 st.info("📭 目前尚無資料")
             else:
-                st.error("⚠️ 資料庫格式錯誤：找不到「日期」欄位，請檢查 Google Sheet 標題列。")
+                st.error(f"❌ 格式錯誤！系統讀到的欄位是：\n{df.columns.tolist()}")
 
     st.sidebar.markdown("---")
     if st.sidebar.button("登出"):
