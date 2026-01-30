@@ -12,11 +12,11 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v1.6.0 (上傳除錯版)"
+SYSTEM_VERSION = "v1.7.0 (人員實名制版)"
 UPDATE_LOG = """
-- **除錯**: 圖片上傳增加詳細錯誤訊息，以便排查 API 問題
-- **新增**: 管理後台增加「前往 Google Sheet 審核」按鈕
-- **流程**: 審核請直接於 Google Sheet 修改狀態，App 會自動同步顯示
+- **新增**: 回報表單新增「👤 執行人員」欄位
+- **優化**: 所有任務皆需填寫人員姓名，落實責任歸屬
+- **流程**: 儀容自檢可明確標示為哪位同仁的紀錄
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
@@ -24,7 +24,7 @@ SHEET_NAME = "馬尼通訊即時回報系統_DB"
 # ⚠️⚠️⚠️ 請確認您的 Google Drive 資料夾 ID ⚠️⚠️⚠️
 IMAGE_FOLDER_ID = "1D-Uz72q-bC8MyFon6RVQuEYFOA7Vcv9y" 
 
-# ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 (方便管理者跳轉) ⚠️⚠️⚠️
+# ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 ⚠️⚠️⚠️
 SHEET_URL = "https://docs.google.com/spreadsheets/d/13kUwwjkiPo-C5kBCxpV0JRLtB_dD6zgTwcDLAZAOu90/edit"
 
 # --- 3. 連線設定 ---
@@ -54,11 +54,11 @@ def init_drive_service():
         return build('drive', 'v3', credentials=creds)
     return None
 
-# --- 4. Google Drive 上傳函式 (詳細除錯版) ---
+# --- 4. Google Drive 上傳函式 ---
 def upload_image_to_drive(file_obj, filename):
     drive_service = init_drive_service()
     if not drive_service:
-        return "上傳失敗: 無權限或金鑰錯誤"
+        return "上傳失敗: 無權限"
     
     try:
         file_metadata = {'name': filename, 'parents': [IMAGE_FOLDER_ID]}
@@ -70,14 +70,11 @@ def upload_image_to_drive(file_obj, filename):
         ).execute()
         return file.get('webViewLink')
     except Exception as e:
-        # 將具體錯誤回傳，方便除錯
         error_msg = str(e)
         if "Drive API has not been used" in error_msg:
-            return "上傳失敗: 請去 Google Cloud 啟用 Drive API"
-        elif "insufficientPermissions" in error_msg:
-            return "上傳失敗: 機器人沒有資料夾寫入權限"
+            return "上傳失敗: 請啟用 Drive API"
         else:
-            return f"上傳失敗: {error_msg[:20]}..." # 只顯示前20個字避免太長
+            return f"上傳失敗: {error_msg[:20]}..."
 
 # --- 5. 資料庫操作 ---
 def load_data():
@@ -159,15 +156,16 @@ def employee_page():
 
     df = load_data()
     
+    # 顯示今日紀錄
     with st.expander("📋 點此查看「本日已回報紀錄」", expanded=True):
         if not df.empty and '日期' in df.columns and '門市' in df.columns:
             today = datetime.now().strftime("%Y-%m-%d")
             my_records = df[ (df['門市'].astype(str) == store_name) & (df['日期'].astype(str) == today) ]
             
             if not my_records.empty:
-                display_cols = ['時間', '任務', '說明', '檢核狀態']
+                # 【調整顯示欄位】加入「人員」
+                display_cols = ['時間', '人員', '任務', '說明', '檢核狀態']
                 final_cols = [c for c in display_cols if c in my_records.columns]
-                # 這裡加入簡單的顏色標示 (如果狀態不是未審核)
                 st.dataframe(my_records[final_cols], use_container_width=True, hide_index=True)
             else:
                 st.info("尚無今日紀錄，請開始執行任務。")
@@ -175,13 +173,14 @@ def employee_page():
             if df.empty:
                 st.warning("⚠️ 目前無資料，或 Google Sheet 連線異常。")
             else:
-                st.error(f"❌ Google Sheet 格式錯誤！\n讀取到的欄位：{df.columns.tolist()}")
+                st.error(f"❌ Google Sheet 格式錯誤！請確認已新增「人員」欄位。\n目前欄位：{df.columns.tolist()}")
 
     st.markdown("---")
 
     # 【回報區塊】
     st.subheader("🚀 執行任務回報")
 
+    # 1. 任務選擇
     task_name = st.selectbox("📌 選擇任務項目", list(task_definitions.keys()))
     task_info = task_definitions[task_name]
 
@@ -192,7 +191,15 @@ def employee_page():
     else:
         st.success("ℹ️ 此任務不強制拍照")
 
+    # 2. 表單填寫
     with st.form("report_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            # 【新增功能】人員姓名輸入框
+            reporter_name = st.text_input("👤 執行人員姓名", placeholder="請輸入姓名")
+        with col2:
+            pass # 排版用
+
         note = st.text_area("備註說明 (選填)", placeholder="如有異常請在此說明...")
         st.markdown("📸 **現場拍照**")
         img_file = st.camera_input("點擊拍照", label_visibility="collapsed")
@@ -200,26 +207,30 @@ def employee_page():
         submit_report = st.form_submit_button("✅ 完成任務並回報", use_container_width=True)
 
         if submit_report:
-            if task_info['photo_required'] and img_file is None:
+            # 驗證 1: 姓名必填
+            if not reporter_name.strip():
+                st.error("⛔ 請填寫「執行人員姓名」！")
+            # 驗證 2: 強制拍照
+            elif task_info['photo_required'] and img_file is None:
                 st.error("⛔ 錯誤：本任務規定必須「拍攝現場照片」才能回報！")
             else:
                 drive_link = "無照片"
                 if img_file:
                     with st.spinner("☁️ 正在上傳照片至雲端..."):
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        filename = f"{timestamp}_{store_name}_{task_name}.jpg"
-                        # 這裡會接收具體的錯誤訊息或連結
+                        filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.jpg" # 檔名也加上人名
                         drive_link = upload_image_to_drive(img_file, filename)
                 
-                # 檢查是否上傳失敗 (如果是字串且包含'失敗')
                 if "上傳失敗" in drive_link:
-                    st.error(f"❌ {drive_link}。請通知管理員檢查 API 設定。")
+                    st.error(f"❌ {drive_link}")
                 else:
                     current_time = datetime.now()
+                    # 【調整寫入順序】加入 reporter_name
                     row_data = [
                         current_time.strftime("%Y-%m-%d"),
                         current_time.strftime("%H:%M:%S"),
                         store_name,
+                        reporter_name, # 新增這一欄
                         task_name,
                         note,
                         drive_link,
@@ -229,7 +240,7 @@ def employee_page():
                     with st.spinner("正在寫入資料庫..."):
                         save_to_sheet(row_data)
                     
-                    st.success("🎉 回報成功！資料已更新。")
+                    st.success(f"🎉 {reporter_name} 回報成功！")
                     time.sleep(1)
                     st.rerun()
 
@@ -243,11 +254,8 @@ def admin_page():
     st.sidebar.title("🔧 管理後台")
     st.sidebar.write(f"登入身分: {st.session_state['user_store']}")
     
-    # 【新增功能】前往 Google Sheet 按鈕
     if SHEET_URL.startswith("http"):
         st.sidebar.link_button("📑 前往 Google Sheet 審核", SHEET_URL)
-    else:
-        st.sidebar.info("請在程式碼中設定 SHEET_URL 以啟用跳轉按鈕")
 
     page = st.sidebar.radio("功能切換", ["即時戰情室", "歷史資料查詢"])
     df = load_data()
