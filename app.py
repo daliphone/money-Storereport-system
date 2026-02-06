@@ -12,20 +12,20 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v2.1.0"
+SYSTEM_VERSION = "v2.2.0 (錄影存證版)"
 UPDATE_LOG = """
-- **調整**: 改為「純扣分」機制，不計算任務獎勵分
-- **規則**: 一項不合格記 1 點違規，單日上限記 5 點
-- **排行**: 累積扣點越少者排名越高
+- **新增**: 支援「影片錄製」回報功能
+- **設定**: 「營業-零用金確認」強制改為錄影上傳，強化金流稽核
+- **優化**: 上傳核心支援 MP4/MOV 等影片格式
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
 
 # ⚠️⚠️⚠️ 請填入【共用雲端硬碟】裡的資料夾 ID ⚠️⚠️⚠️
-IMAGE_FOLDER_ID = "1ttjU6wyHl93w-v16cQhku2rnqQe3pgLI" 
+IMAGE_FOLDER_ID = "您的共用雲端硬碟資料夾ID請貼在這裡" 
 
 # ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 ⚠️⚠️⚠️
-SHEET_URL = "https://docs.google.com/spreadsheets/d/13kUwwjkiPo-C5kBCxpV0JRLtB_dD6zgTwcDLAZAOu90/edit"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/您的試算表ID/edit"
 
 # --- 3. 定義說明書內容 ---
 USER_MANUAL = """
@@ -42,21 +42,16 @@ USER_MANUAL = """
 
 ### 📝 員工回報流程
 1. **登入**：選擇門市並輸入密碼。
-2. **確認**：查看上方「本日已回報紀錄」，確認進度。
-3. **填寫**：
-    * **選擇任務**：注意黃色警示代表「必須拍照」。
+2. **填寫**：
+    * **選擇任務**：注意提示，部分任務需拍照，**零用金需錄影**。
     * **輸入姓名**：請填寫執行人員全名。
-    * **備註**：如有異常請詳細說明。
-    * **拍照**：點擊相機圖示拍攝現場。
-4. **送出**：點擊回報按鈕，系統會自動重整，可直接執行下一項。
+    * **拍照/錄影**：
+        * 📷 **拍照**：直接點擊相機圖示。
+        * 🎥 **錄影**：點擊 Browse files -> 選擇「錄影」或從相簿上傳影片。
+3. **送出**：點擊回報按鈕，等待上傳完成 (影片檔案較大請耐心等候)。
 
-### ⚠️ 違規扣點規則 (v2.1)
-* **純扣分制**：目標是保持 **0 點** 違規紀錄。
-* **記點方式**：每被審核為「不合格」，記 **1 點** 違規。
-* **停損機制**：每日單店記點上限為 **5 點**。
-* **範例**：
-    * 當日 2 項不合格 = 累積 2 點違規。
-    * 當日 8 項不合格 = 累積 5 點違規 (達上限)。
+### ⚠️ 違規扣點規則
+* **純扣分制**：一項不合格記 1 點違規 (單日上限 5 點)。
 """
 
 # --- 4. 連線設定 ---
@@ -86,15 +81,22 @@ def init_drive_service():
         return build('drive', 'v3', credentials=creds)
     return None
 
-# --- 5. Google Drive 上傳函式 ---
-def upload_image_to_drive(file_obj, filename):
+# --- 5. Google Drive 上傳函式 (支援圖片與影片) ---
+def upload_file_to_drive(file_obj, filename, file_type="image"):
     drive_service = init_drive_service()
     if not drive_service:
         return "上傳失敗: 無權限"
     
     try:
+        # 判斷檔案類型設定 Mimetype
+        if file_type == "video":
+            mimetype = 'video/mp4' # 通用影片格式
+        else:
+            mimetype = 'image/jpeg'
+
         file_metadata = {'name': filename, 'parents': [IMAGE_FOLDER_ID]}
-        media = MediaIoBaseUpload(file_obj, mimetype='image/jpeg')
+        media = MediaIoBaseUpload(file_obj, mimetype=mimetype)
+        
         file = drive_service.files().create(
             body=file_metadata,
             media_body=media,
@@ -123,7 +125,7 @@ def save_to_sheet(data_list):
         sheet = client.open(SHEET_NAME).sheet1
         sheet.append_row(data_list)
 
-# --- 7. 門市與任務資料 ---
+# --- 7. 門市與任務資料 (更新任務設定) ---
 users_db = {
     "文賢店": {"password": "111", "role": "User"},
     "東門店": {"password": "222", "role": "User"},
@@ -136,12 +138,33 @@ users_db = {
     "總管理處": {"password": "8888", "role": "Admin"}
 }
 
+# 【重要更新】增加 'media_type' 欄位: 'photo', 'video', 'none'
 task_definitions = {
-    "開店-儀容自檢": {"desc": "請確認：1. 穿著制服且整潔 2. 配戴識別證 3. 頭髮儀容整齊。", "photo_required": True},
-    "開店-環境清掃": {"desc": "請執行：1. 地板掃拖 2. 展示櫃擦拭 3. 櫃台桌面整理 4. 門口玻璃清潔。", "photo_required": True},
-    "營業-零用金確認": {"desc": "請點算收銀機內零用金是否與報表金額相符，如有差異請立即回報。", "photo_required": False},
-    "營業-隨機盤點庫存": {"desc": "請隨機抽選 3-5 樣高單價商品或熱銷配件進行實物盤點。", "photo_required": False},
-    "閉店-庫存表上傳": {"desc": "請確認本日進銷存報表已結算，並將庫存表匯出上傳。", "photo_required": False}
+    "開店-儀容自檢": {
+        "desc": "請確認：1. 穿著制服且整潔 2. 配戴識別證 3. 頭髮儀容整齊。", 
+        "media_type": "photo", 
+        "required": True
+    },
+    "開店-環境清掃": {
+        "desc": "請執行：1. 地板掃拖 2. 展示櫃擦拭 3. 櫃台桌面整理 4. 門口玻璃清潔。", 
+        "media_type": "photo", 
+        "required": True
+    },
+    "營業-零用金確認": {
+        "desc": "請開啟錄影：拍攝收銀機畫面，並實際點算零用金過程，確認與報表金額相符。", 
+        "media_type": "video", # 👈 改為 video
+        "required": True
+    },
+    "營業-隨機盤點庫存": {
+        "desc": "請隨機抽選 3-5 樣高單價商品或熱銷配件進行實物盤點。", 
+        "media_type": "photo", # 可選 video 或 photo，這裡設為 photo
+        "required": False
+    },
+    "閉店-庫存表上傳": {
+        "desc": "請確認本日進銷存報表已結算，並將庫存表匯出上傳。", 
+        "media_type": "photo", 
+        "required": False
+    }
 }
 
 # --- 8. 輔助函式 ---
@@ -149,36 +172,25 @@ def show_footer():
     st.markdown("---")
     st.markdown(f"<div style='text-align: center; color: gray; font-size: 12px;'>{COPYRIGHT_TEXT} | {SYSTEM_VERSION}</div>", unsafe_allow_html=True)
 
-# 積分計算函式 (v2.1 純扣分制)
+# 積分計算 (v2.1 邏輯)
 def calculate_scores_v2(df):
     if df.empty or '檢核狀態' not in df.columns or '日期' not in df.columns or '門市' not in df.columns:
         return pd.DataFrame()
 
     scores_list = []
-    
-    # 1. 依據 [日期, 門市] 分組計算單日違規點數
     grouped = df.groupby(['日期', '門市'])
-    
     for (date, store), group in grouped:
-        # A. 計算不合格數量
         mistakes = len(group[group['檢核狀態'] == '不合格'])
-        
-        # B. 單日上限：最多記 5 點
         daily_penalty = min(mistakes, 5)
-        
-        # 只有當天有扣分才記錄
         if daily_penalty > 0:
             scores_list.append({'門市': store, '單日違規點數': daily_penalty})
     
-    # 2. 加總各門市的歷史總扣點
     scores_df = pd.DataFrame(scores_list)
     if not scores_df.empty:
         final_scores = scores_df.groupby('門市')['單日違規點數'].sum().reset_index(name='累積扣點(越少越好)')
-        # 排序：扣分少的排在上面 (升冪排序)
         final_scores = final_scores.sort_values(by='累積扣點(越少越好)', ascending=True)
         return final_scores
     else:
-        # 如果大家都沒有扣分，顯示完美
         return pd.DataFrame(columns=['門市', '累積扣點(越少越好)'])
 
 # --- 9. 登入畫面 ---
@@ -255,10 +267,17 @@ def employee_page():
 
     st.info(f"💡 **執行重點**：\n{task_info['desc']}")
 
-    if task_info['photo_required']:
-        st.warning("⚠️ **注意：此任務必須拍攝現場照片才能送出！**")
+    # 判斷任務類型，顯示不同提示與元件
+    media_required = task_info['required']
+    media_type = task_info.get('media_type', 'photo') # 預設為 photo
+
+    if media_required:
+        if media_type == 'video':
+            st.warning("🎥 **注意：此任務必須「錄影」並上傳影片檔！**")
+        else:
+            st.warning("📷 **注意：此任務必須「拍照」才能送出！**")
     else:
-        st.success("ℹ️ 此任務不強制拍照")
+        st.success("ℹ️ 此任務不強制拍照/錄影")
 
     with st.form("report_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -268,23 +287,37 @@ def employee_page():
             pass
 
         note = st.text_area("備註說明 (選填)", placeholder="如有異常請在此說明...")
-        st.markdown("📸 **現場拍照**")
-        img_file = st.camera_input("點擊拍照", label_visibility="collapsed")
         
+        # 【核心修改】根據 media_type 決定顯示相機還是檔案上傳
+        uploaded_file = None
+        if media_type == 'video':
+            st.markdown("🎥 **上傳影片 (支援 mp4, mov)**")
+            uploaded_file = st.file_uploader("點擊 Browse files 選擇錄影檔", type=['mp4', 'mov', 'avi'], label_visibility="collapsed")
+        else:
+            st.markdown("📷 **現場拍照**")
+            uploaded_file = st.camera_input("點擊拍照", label_visibility="collapsed")
+
         submit_report = st.form_submit_button("✅ 完成任務並回報", use_container_width=True)
 
         if submit_report:
             if not reporter_name.strip():
                 st.error("⛔ 請填寫「執行人員姓名」！")
-            elif task_info['photo_required'] and img_file is None:
-                st.error("⛔ 錯誤：本任務規定必須「拍攝現場照片」才能回報！")
+            elif media_required and uploaded_file is None:
+                if media_type == 'video':
+                    st.error("⛔ 錯誤：本任務規定必須「上傳影片」！")
+                else:
+                    st.error("⛔ 錯誤：本任務規定必須「拍照」！")
             else:
-                drive_link = "無照片"
-                if img_file:
-                    with st.spinner("☁️ 正在上傳照片至雲端..."):
+                drive_link = "無檔案"
+                if uploaded_file:
+                    with st.spinner("☁️ 正在上傳檔案至雲端 (影片較大請稍候)..."):
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.jpg"
-                        drive_link = upload_image_to_drive(img_file, filename)
+                        # 檔名增加影片或照片副檔名區別
+                        ext = "mp4" if media_type == 'video' else "jpg"
+                        filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.{ext}"
+                        
+                        # 呼叫上傳函式，傳入 media_type
+                        drive_link = upload_file_to_drive(uploaded_file, filename, file_type=media_type)
                 
                 if "上傳失敗" in drive_link:
                     st.error(f"❌ {drive_link}")
@@ -341,7 +374,6 @@ def admin_page():
             col2.metric("異常備註", abnormal_count)
             col3.metric("活躍門市", today_data['門市'].nunique())
             
-            # 【新版 v2.1】門市違規記點榜
             st.markdown("---")
             st.subheader("⚠️ 門市違規記點榜")
             st.info("💡 計分規則：一項不合格記 1 點違規 (單日上限 5 點)。點數越少表現越好。")
@@ -397,4 +429,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
