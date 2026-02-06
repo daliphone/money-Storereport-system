@@ -22,10 +22,10 @@ COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
 
 # ⚠️⚠️⚠️ 請填入【共用雲端硬碟】裡的資料夾 ID ⚠️⚠️⚠️
-IMAGE_FOLDER_ID = "您的共用雲端硬碟資料夾ID請貼在這裡" 
+IMAGE_FOLDER_ID = "https://drive.google.com/drive/u/0/folders/1D-Uz72q-bC8MyFon6RVQuEYFOA7Vcv9y" 
 
 # ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 ⚠️⚠️⚠️
-SHEET_URL = "https://docs.google.com/spreadsheets/d/您的試算表ID/edit"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/13kUwwjkiPo-C5kBCxpV0JRLtB_dD6zgTwcDLAZAOu90/edit"
 
 # --- 3. 定義說明書內容 ---
 USER_MANUAL = """
@@ -431,3 +431,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
