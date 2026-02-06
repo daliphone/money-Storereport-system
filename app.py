@@ -19,7 +19,7 @@ UPDATE_LOG = """
 - **設定**: 僅「開店任務」強制拍照，其餘任務改為純文字回報
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
-SHEET_NAME = "馬尼通訊即時回報系統_DB"
+SHEET_NAME = "馬尼通訊門市每日即時回報系統_DB"
 
 # ⚠️⚠️⚠️ 請填入【共用雲端硬碟】裡的資料夾 ID ⚠️⚠️⚠️
 IMAGE_FOLDER_ID = "https://drive.google.com/drive/u/0/folders/1D-Uz72q-bC8MyFon6RVQuEYFOA7Vcv9y" 
@@ -431,4 +431,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
