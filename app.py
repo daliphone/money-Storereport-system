@@ -12,11 +12,11 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v2.2.0 (錄影存證版)"
+SYSTEM_VERSION = "v2.3.0 (介面優化版)"
 UPDATE_LOG = """
-- **新增**: 支援「影片錄製」回報功能
-- **設定**: 「營業-零用金確認」強制改為錄影上傳，強化金流稽核
-- **優化**: 上傳核心支援 MP4/MOV 等影片格式
+- **優化**: 針對不同任務隱藏/顯示相機介面，畫面更清爽
+- **新增**: 「零用金確認」新增金額輸入欄位
+- **設定**: 僅「開店任務」強制拍照，其餘任務改為純文字回報
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
@@ -43,12 +43,10 @@ USER_MANUAL = """
 ### 📝 員工回報流程
 1. **登入**：選擇門市並輸入密碼。
 2. **填寫**：
-    * **選擇任務**：注意提示，部分任務需拍照，**零用金需錄影**。
-    * **輸入姓名**：請填寫執行人員全名。
-    * **拍照/錄影**：
-        * 📷 **拍照**：直接點擊相機圖示。
-        * 🎥 **錄影**：點擊 Browse files -> 選擇「錄影」或從相簿上傳影片。
-3. **送出**：點擊回報按鈕，等待上傳完成 (影片檔案較大請耐心等候)。
+    * **選擇任務**：系統會自動切換顯示「拍照」或「輸入金額」欄位。
+    * **輸入姓名**：請填寫執行人員全名 (視同盤簽)。
+    * **拍照**：僅「開店任務」需拍攝現場。
+3. **送出**：點擊回報按鈕。
 
 ### ⚠️ 違規扣點規則
 * **純扣分制**：一項不合格記 1 點違規 (單日上限 5 點)。
@@ -81,16 +79,15 @@ def init_drive_service():
         return build('drive', 'v3', credentials=creds)
     return None
 
-# --- 5. Google Drive 上傳函式 (支援圖片與影片) ---
+# --- 5. Google Drive 上傳函式 ---
 def upload_file_to_drive(file_obj, filename, file_type="image"):
     drive_service = init_drive_service()
     if not drive_service:
         return "上傳失敗: 無權限"
     
     try:
-        # 判斷檔案類型設定 Mimetype
         if file_type == "video":
-            mimetype = 'video/mp4' # 通用影片格式
+            mimetype = 'video/mp4'
         else:
             mimetype = 'image/jpeg'
 
@@ -125,7 +122,7 @@ def save_to_sheet(data_list):
         sheet = client.open(SHEET_NAME).sheet1
         sheet.append_row(data_list)
 
-# --- 7. 門市與任務資料 (更新任務設定) ---
+# --- 7. 門市與任務資料 (關鍵修改) ---
 users_db = {
     "文賢店": {"password": "111", "role": "User"},
     "東門店": {"password": "222", "role": "User"},
@@ -138,7 +135,7 @@ users_db = {
     "總管理處": {"password": "8888", "role": "Admin"}
 }
 
-# 【重要更新】增加 'media_type' 欄位: 'photo', 'video', 'none'
+# 【修改說明】: media_type 設為 'none' 就會隱藏相機
 task_definitions = {
     "開店-儀容自檢": {
         "desc": "請確認：1. 穿著制服且整潔 2. 配戴識別證 3. 頭髮儀容整齊。", 
@@ -151,18 +148,18 @@ task_definitions = {
         "required": True
     },
     "營業-零用金確認": {
-        "desc": "請開啟錄影：拍攝收銀機畫面，並實際點算零用金過程，確認與報表金額相符。", 
-        "media_type": "video", # 👈 改為 video
-        "required": True
+        "desc": "請確實點算收銀機內零用金，並輸入盤點金額與簽名。", 
+        "media_type": "none", # 👈 隱藏相機
+        "required": False
     },
     "營業-隨機盤點庫存": {
         "desc": "請隨機抽選 3-5 樣高單價商品或熱銷配件進行實物盤點。", 
-        "media_type": "photo", # 可選 video 或 photo，這裡設為 photo
+        "media_type": "none", # 👈 隱藏相機
         "required": False
     },
     "閉店-庫存表上傳": {
         "desc": "請確認本日進銷存報表已結算，並將庫存表匯出上傳。", 
-        "media_type": "photo", 
+        "media_type": "none", # 👈 隱藏相機
         "required": False
     }
 }
@@ -172,7 +169,7 @@ def show_footer():
     st.markdown("---")
     st.markdown(f"<div style='text-align: center; color: gray; font-size: 12px;'>{COPYRIGHT_TEXT} | {SYSTEM_VERSION}</div>", unsafe_allow_html=True)
 
-# 積分計算 (v2.1 邏輯)
+# 積分計算
 def calculate_scores_v2(df):
     if df.empty or '檢核狀態' not in df.columns or '日期' not in df.columns or '門市' not in df.columns:
         return pd.DataFrame()
@@ -267,58 +264,63 @@ def employee_page():
 
     st.info(f"💡 **執行重點**：\n{task_info['desc']}")
 
-    # 判斷任務類型，顯示不同提示與元件
+    # 判斷任務設定
     media_required = task_info['required']
-    media_type = task_info.get('media_type', 'photo') # 預設為 photo
+    media_type = task_info.get('media_type', 'none') # 預設 none
 
-    if media_required:
-        if media_type == 'video':
-            st.warning("🎥 **注意：此任務必須「錄影」並上傳影片檔！**")
-        else:
+    # 根據是否需要拍照顯示不同提示
+    if media_type != 'none':
+        if media_required:
             st.warning("📷 **注意：此任務必須「拍照」才能送出！**")
+        else:
+            st.success("ℹ️ 此任務可選填拍照")
     else:
-        st.success("ℹ️ 此任務不強制拍照/錄影")
+        st.success("ℹ️ 此任務為「純文字回報」，無需拍照")
 
     with st.form("report_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
-            reporter_name = st.text_input("👤 執行人員姓名", placeholder="請輸入姓名")
+            # 這是共用的「人員盤簽」欄位
+            reporter_name = st.text_input("👤 執行人員姓名 (盤簽)", placeholder="請輸入姓名")
         with col2:
-            pass
+            # 【新增】若是零用金確認，顯示金額輸入框
+            cash_amount = None
+            if task_name == "營業-零用金確認":
+                cash_amount = st.number_input("💰 盤點金額", min_value=0, step=100)
 
         note = st.text_area("備註說明 (選填)", placeholder="如有異常請在此說明...")
         
-        # 【核心修改】根據 media_type 決定顯示相機還是檔案上傳
+        # 【核心修改】根據 media_type 決定是否顯示相機
         uploaded_file = None
-        if media_type == 'video':
-            st.markdown("🎥 **上傳影片 (支援 mp4, mov)**")
-            uploaded_file = st.file_uploader("點擊 Browse files 選擇錄影檔", type=['mp4', 'mov', 'avi'], label_visibility="collapsed")
-        else:
+        if media_type == 'photo':
             st.markdown("📷 **現場拍照**")
             uploaded_file = st.camera_input("點擊拍照", label_visibility="collapsed")
+        elif media_type == 'video':
+            # 目前邏輯沒有用到 video，但保留擴充性
+            st.markdown("🎥 **上傳影片**")
+            uploaded_file = st.file_uploader("選擇影片", type=['mp4', 'mov'])
 
         submit_report = st.form_submit_button("✅ 完成任務並回報", use_container_width=True)
 
         if submit_report:
             if not reporter_name.strip():
-                st.error("⛔ 請填寫「執行人員姓名」！")
+                st.error("⛔ 請填寫「執行人員姓名」以完成盤簽！")
+            # 檢查強制拍照
             elif media_required and uploaded_file is None:
-                if media_type == 'video':
-                    st.error("⛔ 錯誤：本任務規定必須「上傳影片」！")
-                else:
-                    st.error("⛔ 錯誤：本任務規定必須「拍照」！")
+                st.error("⛔ 錯誤：本任務規定必須「拍照」！")
             else:
-                drive_link = "無檔案"
+                drive_link = "無照片"
                 if uploaded_file:
-                    with st.spinner("☁️ 正在上傳檔案至雲端 (影片較大請稍候)..."):
+                    with st.spinner("☁️ 正在上傳照片至雲端..."):
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        # 檔名增加影片或照片副檔名區別
-                        ext = "mp4" if media_type == 'video' else "jpg"
-                        filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.{ext}"
-                        
-                        # 呼叫上傳函式，傳入 media_type
-                        drive_link = upload_file_to_drive(uploaded_file, filename, file_type=media_type)
+                        filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.jpg"
+                        drive_link = upload_file_to_drive(uploaded_file, filename, file_type='image')
                 
+                # 【資料整合】若有填寫金額，整合進「說明」欄位
+                final_note = note
+                if task_name == "營業-零用金確認":
+                    final_note = f"盤點金額: {cash_amount} 元\n{note}"
+
                 if "上傳失敗" in drive_link:
                     st.error(f"❌ {drive_link}")
                 else:
@@ -329,7 +331,7 @@ def employee_page():
                         store_name,
                         reporter_name,
                         task_name,
-                        note,
+                        final_note, # 整合後的說明
                         drive_link,
                         "未審核"
                     ]
