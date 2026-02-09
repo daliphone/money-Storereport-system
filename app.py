@@ -12,19 +12,19 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v2.3.1 (盤點拍照優化版)"
+SYSTEM_VERSION = "v2.3.2 (連線修復版)"
 UPDATE_LOG = """
-- **調整**: 「營業-隨機盤點庫存」改為強制拍照
-- **說明**: 盤點需拍攝前一日庫存表單(含圈選、日期與簽名)
-- **維持**: 零用金確認維持輸入金額模式
+- **修復**: 改用網址直接連線 Google Sheet，解決找不到檔案或連線異常問題
+- **優化**: 已內建您的資料夾 ID 與試算表網址
+- **功能**: 隨機盤點庫存維持「強制拍照」設定
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
 
-# ⚠️⚠️⚠️ 請填入【共用雲端硬碟】裡的資料夾 ID ⚠️⚠️⚠️
+# ✅ 已幫您填入正確的 ID
 IMAGE_FOLDER_ID = "1ttjU6wyHl93w-v16cQhku2rnqQe3pgLI" 
 
-# ⚠️⚠️⚠️ 請填入您的 Google Sheet 網址 ⚠️⚠️⚠️
+# ✅ 已幫您填入正確的網址
 SHEET_URL = "https://docs.google.com/spreadsheets/d/13kUwwjkiPo-C5kBCxpV0JRLtB_dD6zgTwcDLAZAOu90/edit"
 
 # --- 3. 定義說明書內容 ---
@@ -104,25 +104,29 @@ def upload_file_to_drive(file_obj, filename, file_type="image"):
     except Exception as e:
         return f"上傳失敗: {str(e)}"
 
-# --- 6. 資料庫操作 ---
+# --- 6. 資料庫操作 (關鍵修復) ---
 def load_data():
     client = init_sheet_client()
     if client:
         try:
-            sheet = client.open(SHEET_NAME).sheet1
+            # 🔧 修復：改用 open_by_url 直接抓網址，比抓檔名更準確
+            sheet = client.open_by_url(SHEET_URL).sheet1
             data = sheet.get_all_records()
             return pd.DataFrame(data)
         except Exception as e:
+            # 印出錯誤方便除錯 (Streamlit後台看得到)
+            print(f"讀取失敗: {e}")
             return pd.DataFrame()
     return pd.DataFrame()
 
 def save_to_sheet(data_list):
     client = init_sheet_client()
     if client:
-        sheet = client.open(SHEET_NAME).sheet1
+        # 🔧 修復：寫入時也改用 open_by_url
+        sheet = client.open_by_url(SHEET_URL).sheet1
         sheet.append_row(data_list)
 
-# --- 7. 門市與任務資料 (關鍵修改) ---
+# --- 7. 門市與任務資料 ---
 users_db = {
     "文賢店": {"password": "111", "role": "User"},
     "東門店": {"password": "222", "role": "User"},
@@ -135,11 +139,7 @@ users_db = {
     "總管理處": {"password": "8888", "role": "Admin"}
 }
 
-# 【修改說明】: 
-# 1. 開店任務: photo (強制)
-# 2. 零用金: none (純文字+金額)
-# 3. 隨機盤點: photo (強制, 修改說明)
-# 4. 庫存表上傳: none (純文字)
+# 包含上一版要求的「隨機盤點庫存強制拍照」
 task_definitions = {
     "開店-儀容自檢": {
         "desc": "請確認：1. 穿著制服且整潔 2. 配戴識別證 3. 頭髮儀容整齊。", 
@@ -158,8 +158,8 @@ task_definitions = {
     },
     "營業-隨機盤點庫存": {
         "desc": "需要拍攝，拍下前一日庫存表單圈選所隨機盤點品項以及簽上日期與簽名。", 
-        "media_type": "photo", # 👈 改為拍照
-        "required": True       # 👈 改為強制
+        "media_type": "photo", # 強制拍照
+        "required": True
     },
     "閉店-庫存表上傳": {
         "desc": "請確認本日進銷存報表已結算，並將庫存表匯出上傳。", 
@@ -257,8 +257,11 @@ def employee_page():
         else:
             if df.empty:
                 st.warning("⚠️ 目前無資料，或 Google Sheet 連線異常。")
+                # 這裡不顯示錯誤，因為 df.empty 可能是真的沒資料
+                # 但如果有連線問題，上面的 load_data 會印出錯誤
             else:
-                st.error(f"❌ Google Sheet 格式錯誤！請確認已新增「人員」欄位。")
+                if not df.empty and '人員' not in df.columns:
+                     st.error(f"❌ Google Sheet 格式錯誤！請確認已新增「人員」欄位。")
 
     st.markdown("---")
     st.subheader("🚀 執行任務回報")
@@ -270,9 +273,8 @@ def employee_page():
 
     # 判斷任務設定
     media_required = task_info['required']
-    media_type = task_info.get('media_type', 'none') # 預設 none
+    media_type = task_info.get('media_type', 'none')
 
-    # 根據是否需要拍照顯示不同提示
     if media_type != 'none':
         if media_required:
             st.warning("📷 **注意：此任務必須「拍照」才能送出！**")
@@ -284,23 +286,19 @@ def employee_page():
     with st.form("report_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
-            # 這是共用的「人員盤簽」欄位
             reporter_name = st.text_input("👤 執行人員姓名 (盤簽)", placeholder="請輸入姓名")
         with col2:
-            # 【新增】若是零用金確認，顯示金額輸入框
             cash_amount = None
             if task_name == "營業-零用金確認":
                 cash_amount = st.number_input("💰 盤點金額", min_value=0, step=100)
 
         note = st.text_area("備註說明 (選填)", placeholder="如有異常請在此說明...")
         
-        # 【核心修改】根據 media_type 決定是否顯示相機
         uploaded_file = None
         if media_type == 'photo':
             st.markdown("📷 **現場拍照**")
             uploaded_file = st.camera_input("點擊拍照", label_visibility="collapsed")
         elif media_type == 'video':
-            # 目前邏輯沒有用到 video，但保留擴充性
             st.markdown("🎥 **上傳影片**")
             uploaded_file = st.file_uploader("選擇影片", type=['mp4', 'mov'])
 
@@ -309,7 +307,6 @@ def employee_page():
         if submit_report:
             if not reporter_name.strip():
                 st.error("⛔ 請填寫「執行人員姓名」以完成盤簽！")
-            # 檢查強制拍照
             elif media_required and uploaded_file is None:
                 st.error("⛔ 錯誤：本任務規定必須「拍照」！")
             else:
@@ -320,7 +317,6 @@ def employee_page():
                         filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.jpg"
                         drive_link = upload_file_to_drive(uploaded_file, filename, file_type='image')
                 
-                # 【資料整合】若有填寫金額，整合進「說明」欄位
                 final_note = note
                 if task_name == "營業-零用金確認":
                     final_note = f"盤點金額: {cash_amount} 元\n{note}"
@@ -335,7 +331,7 @@ def employee_page():
                         store_name,
                         reporter_name,
                         task_name,
-                        final_note, # 整合後的說明
+                        final_note,
                         drive_link,
                         "未審核"
                     ]
