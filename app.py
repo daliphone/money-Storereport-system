@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta, timezone # 👈 新增時區模組
+from datetime import datetime, timedelta, timezone
 import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -12,10 +12,10 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v2.3.3 (時區校正版)"
+SYSTEM_VERSION = "v2.3.4 (時間格式終極修復版)"
 UPDATE_LOG = """
-- **修復**: 強制校正為台灣時間 (UTC+8)，解決回報時間慢 8 小時的問題
-- **優化**: 系統顯示時間與資料庫寫入時間同步更新
+- **修復**: 時間欄位改為「強制文字格式」，徹底解決 1899/12/30 日期顯示問題
+- **優化**: 時間顯示將固定為 24 小時制 (例如 13:00:00)，清晰易讀
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
@@ -156,7 +156,7 @@ task_definitions = {
     },
     "營業-隨機盤點庫存": {
         "desc": "需要拍攝，拍下前一日庫存表單圈選所隨機盤點品項以及簽上日期與簽名。", 
-        "media_type": "photo", # 強制拍照
+        "media_type": "photo", 
         "required": True
     },
     "閉店-庫存表上傳": {
@@ -237,7 +237,6 @@ def employee_page():
         st.rerun()
 
     st.title(f"📝 {store_name}")
-    # 🔧 時區修正：顯示台灣時間
     tw_now = datetime.now(TAIWAN_TZ)
     st.caption(f"目前時間 (台灣): {tw_now.strftime('%Y-%m-%d %H:%M')}")
 
@@ -245,7 +244,6 @@ def employee_page():
     
     with st.expander("📋 點此查看「本日已回報紀錄」", expanded=True):
         if not df.empty and '日期' in df.columns and '門市' in df.columns:
-            # 🔧 時區修正：比對台灣日期
             today = datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d")
             my_records = df[ (df['門市'].astype(str) == store_name) & (df['日期'].astype(str) == today) ]
             
@@ -311,7 +309,6 @@ def employee_page():
                 drive_link = "無照片"
                 if uploaded_file:
                     with st.spinner("☁️ 正在上傳照片至雲端..."):
-                        # 🔧 時區修正：檔名時間使用台灣時間
                         tw_time_str = datetime.now(TAIWAN_TZ).strftime("%Y%m%d_%H%M%S")
                         filename = f"{tw_time_str}_{store_name}_{reporter_name}_{task_name}.jpg"
                         drive_link = upload_file_to_drive(uploaded_file, filename, file_type='image')
@@ -323,11 +320,14 @@ def employee_page():
                 if "上傳失敗" in drive_link:
                     st.error(f"❌ {drive_link}")
                 else:
-                    # 🔧 時區修正：寫入資料庫使用台灣時間
                     current_tw_time = datetime.now(TAIWAN_TZ)
+                    # 【核心修改】時間欄位增加單引號，強制變更為文字格式
+                    # 例如: '12:12:13
+                    time_str_force_text = f"'{current_tw_time.strftime('%H:%M:%S')}"
+                    
                     row_data = [
                         current_tw_time.strftime("%Y-%m-%d"),
-                        current_tw_time.strftime("%H:%M:%S"),
+                        time_str_force_text,  # 👈 這裡加了引號
                         store_name,
                         reporter_name,
                         task_name,
@@ -365,7 +365,6 @@ def admin_page():
         st.title("📊 營運戰情室")
         if is_data_valid:
             col1, col2, col3 = st.columns(3)
-            # 🔧 時區修正：統計今日數據使用台灣時間
             today = datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d")
             today_data = df[df['日期'].astype(str) == today]
             col1.metric("今日總回報數", len(today_data))
