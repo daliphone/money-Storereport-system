@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta, timezone # 👈 新增時區模組
 import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -12,20 +12,22 @@ import io
 st.set_page_config(page_title="馬尼通訊職責系統", page_icon="📱", layout="centered")
 
 # --- 2. 系統全域設定 ---
-SYSTEM_VERSION = "v2.3.2 (連線修復版)"
+SYSTEM_VERSION = "v2.3.3 (時區校正版)"
 UPDATE_LOG = """
-- **修復**: 改用網址直接連線 Google Sheet，解決找不到檔案或連線異常問題
-- **優化**: 已內建您的資料夾 ID 與試算表網址
-- **功能**: 隨機盤點庫存維持「強制拍照」設定
+- **修復**: 強制校正為台灣時間 (UTC+8)，解決回報時間慢 8 小時的問題
+- **優化**: 系統顯示時間與資料庫寫入時間同步更新
 """
 COPYRIGHT_TEXT = "Ⓒ馬尼通訊 門市每日職責系統"
 SHEET_NAME = "馬尼通訊即時回報系統_DB"
 
-# ✅ 已幫您填入正確的 ID
+# ✅ 您的共用雲端硬碟 ID
 IMAGE_FOLDER_ID = "1ttjU6wyHl93w-v16cQhku2rnqQe3pgLI" 
 
-# ✅ 已幫您填入正確的網址
+# ✅ 您的 Google Sheet 網址
 SHEET_URL = "https://docs.google.com/spreadsheets/d/13kUwwjkiPo-C5kBCxpV0JRLtB_dD6zgTwcDLAZAOu90/edit"
+
+# 🕰️ 設定台灣時區 (UTC+8)
+TAIWAN_TZ = timezone(timedelta(hours=8))
 
 # --- 3. 定義說明書內容 ---
 USER_MANUAL = """
@@ -104,17 +106,15 @@ def upload_file_to_drive(file_obj, filename, file_type="image"):
     except Exception as e:
         return f"上傳失敗: {str(e)}"
 
-# --- 6. 資料庫操作 (關鍵修復) ---
+# --- 6. 資料庫操作 ---
 def load_data():
     client = init_sheet_client()
     if client:
         try:
-            # 🔧 修復：改用 open_by_url 直接抓網址，比抓檔名更準確
             sheet = client.open_by_url(SHEET_URL).sheet1
             data = sheet.get_all_records()
             return pd.DataFrame(data)
         except Exception as e:
-            # 印出錯誤方便除錯 (Streamlit後台看得到)
             print(f"讀取失敗: {e}")
             return pd.DataFrame()
     return pd.DataFrame()
@@ -122,7 +122,6 @@ def load_data():
 def save_to_sheet(data_list):
     client = init_sheet_client()
     if client:
-        # 🔧 修復：寫入時也改用 open_by_url
         sheet = client.open_by_url(SHEET_URL).sheet1
         sheet.append_row(data_list)
 
@@ -139,7 +138,6 @@ users_db = {
     "總管理處": {"password": "8888", "role": "Admin"}
 }
 
-# 包含上一版要求的「隨機盤點庫存強制拍照」
 task_definitions = {
     "開店-儀容自檢": {
         "desc": "請確認：1. 穿著制服且整潔 2. 配戴識別證 3. 頭髮儀容整齊。", 
@@ -239,13 +237,16 @@ def employee_page():
         st.rerun()
 
     st.title(f"📝 {store_name}")
-    st.caption(f"目前時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    # 🔧 時區修正：顯示台灣時間
+    tw_now = datetime.now(TAIWAN_TZ)
+    st.caption(f"目前時間 (台灣): {tw_now.strftime('%Y-%m-%d %H:%M')}")
 
     df = load_data()
     
     with st.expander("📋 點此查看「本日已回報紀錄」", expanded=True):
         if not df.empty and '日期' in df.columns and '門市' in df.columns:
-            today = datetime.now().strftime("%Y-%m-%d")
+            # 🔧 時區修正：比對台灣日期
+            today = datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d")
             my_records = df[ (df['門市'].astype(str) == store_name) & (df['日期'].astype(str) == today) ]
             
             if not my_records.empty:
@@ -257,8 +258,6 @@ def employee_page():
         else:
             if df.empty:
                 st.warning("⚠️ 目前無資料，或 Google Sheet 連線異常。")
-                # 這裡不顯示錯誤，因為 df.empty 可能是真的沒資料
-                # 但如果有連線問題，上面的 load_data 會印出錯誤
             else:
                 if not df.empty and '人員' not in df.columns:
                      st.error(f"❌ Google Sheet 格式錯誤！請確認已新增「人員」欄位。")
@@ -271,7 +270,6 @@ def employee_page():
 
     st.info(f"💡 **執行重點**：\n{task_info['desc']}")
 
-    # 判斷任務設定
     media_required = task_info['required']
     media_type = task_info.get('media_type', 'none')
 
@@ -313,8 +311,9 @@ def employee_page():
                 drive_link = "無照片"
                 if uploaded_file:
                     with st.spinner("☁️ 正在上傳照片至雲端..."):
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        filename = f"{timestamp}_{store_name}_{reporter_name}_{task_name}.jpg"
+                        # 🔧 時區修正：檔名時間使用台灣時間
+                        tw_time_str = datetime.now(TAIWAN_TZ).strftime("%Y%m%d_%H%M%S")
+                        filename = f"{tw_time_str}_{store_name}_{reporter_name}_{task_name}.jpg"
                         drive_link = upload_file_to_drive(uploaded_file, filename, file_type='image')
                 
                 final_note = note
@@ -324,10 +323,11 @@ def employee_page():
                 if "上傳失敗" in drive_link:
                     st.error(f"❌ {drive_link}")
                 else:
-                    current_time = datetime.now()
+                    # 🔧 時區修正：寫入資料庫使用台灣時間
+                    current_tw_time = datetime.now(TAIWAN_TZ)
                     row_data = [
-                        current_time.strftime("%Y-%m-%d"),
-                        current_time.strftime("%H:%M:%S"),
+                        current_tw_time.strftime("%Y-%m-%d"),
+                        current_tw_time.strftime("%H:%M:%S"),
                         store_name,
                         reporter_name,
                         task_name,
@@ -365,7 +365,8 @@ def admin_page():
         st.title("📊 營運戰情室")
         if is_data_valid:
             col1, col2, col3 = st.columns(3)
-            today = datetime.now().strftime("%Y-%m-%d")
+            # 🔧 時區修正：統計今日數據使用台灣時間
+            today = datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d")
             today_data = df[df['日期'].astype(str) == today]
             col1.metric("今日總回報數", len(today_data))
             
